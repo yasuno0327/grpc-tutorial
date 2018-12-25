@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"flag"
+	"fmt"
 	pb "grpc-tutorial/routeguide"
 	"io"
 	"math"
@@ -12,7 +14,7 @@ import (
 )
 
 func main() {
-
+	flag.Parse()
 }
 
 type routeGuideServer struct {
@@ -113,4 +115,32 @@ func calcDistance(p1 *pb.Point, p2 *pb.Point) int32 {
 
 func toRadians(num float64) float64 {
 	return num * math.Pi / float64(180)
+}
+
+func (s *routeGuideServer) RouteChat(stream pb.RouteGuide_RouteChatServer) error {
+	for {
+		in, err := stream.Recv()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		key := serialize(in.Location)
+
+		s.mu.Lock()
+		s.routeNotes[key] = append(s.routeNotes[key], in)
+		rn := make([]*pb.RouteNote, len(s.routeNotes[key]))
+		copy(rn, s.routeNotes[key])
+		s.mu.Unlock()
+		for _, note := range rn {
+			if err := stream.Send(note); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func serialize(point *pb.Point) string {
+	return fmt.Sprintf("%d %d", point.Lattitude, point.Longititude)
 }
