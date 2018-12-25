@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	pb "grpc-tutorial/routeguide"
+	"io"
 	"math"
 	"sync"
+	"time"
 
 	"github.com/golang/protobuf/proto"
 )
@@ -57,4 +59,58 @@ func inRange(point *pb.Point, rect *pb.Rectangle) bool {
 		return true
 	}
 	return false
+}
+
+func (s *routeGuideServer) RecordRoute(stream pb.RouteGuide_RecordRouteServer) error {
+	var pointCount, featureCount, distance int32
+	var lastPoint *pb.Point
+	startTime := time.Now()
+	for {
+		point, err := stream.Recv()
+		if err == io.EOF {
+			endTime := time.Now()
+			return stream.SendAndClose(&pb.RouteSummary{
+				PointCount:   pointCount,
+				FeatureCount: featureCount,
+				Distance:     distance,
+				ElapsedTime:  int32(endTime.Sub(startTime).Seconds()),
+			})
+		}
+		if err != nil {
+			return err
+		}
+		pointCount++
+		for _, feature := range s.savedFeatures {
+			if proto.Equal(feature.Location, point) {
+				featureCount++
+			}
+		}
+		if lastPoint != nil {
+			distance += calcDistance(lastPoint, point)
+		}
+		lastPoint = point
+	}
+}
+
+func calcDistance(p1 *pb.Point, p2 *pb.Point) int32 {
+	const CordFactor float64 = 1e7
+	const R float64 = float64(6371000)
+	lat1 := toRadians(float64(p1.Lattitude) / CordFactor)
+	lat2 := toRadians(float64(p2.Lattitude) / CordFactor)
+	lng1 := toRadians(float64(p1.Longititude) / CordFactor)
+	lng2 := toRadians(float64(p2.Longititude) / CordFactor)
+	dlat := lat2 - lat1
+	dlng := lng2 - lng1
+
+	a := math.Sin(dlat/2)*math.Sin(dlat/2) +
+		math.Cos(lat1)*math.Cos(lat2)*
+			math.Sin(dlng/2)*math.Sin(dlng/2)
+	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+
+	distance := R * c
+	return int32(distance)
+}
+
+func toRadians(num float64) float64 {
+	return num * math.Pi / float64(180)
 }
