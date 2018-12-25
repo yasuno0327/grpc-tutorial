@@ -2,19 +2,56 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	pb "grpc-tutorial/routeguide"
 	"io"
+	"io/ioutil"
+	"log"
 	"math"
+	"net"
 	"sync"
 	"time"
 
 	"github.com/golang/protobuf/proto"
+	"google.golang.org/grpc"
+)
+
+var (
+	tls        = flag.Bool("tls", false, "Connection uses TLS if true, else plain TCP")
+	certFile   = flag.String("cert_file", "", "The TLS cert file")
+	keyFile    = flag.String("key_file", "", "The TLS key file")
+	jsonDBFile = flag.String("json_db_file", "testdata/route_guide_db.json", "A json file containing a list of features")
+	port       = flag.Int("port", 8080, "The server port")
 )
 
 func main() {
 	flag.Parse()
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
+	if err != nil {
+		log.Fatalf("failed to listen: %v", err)
+	}
+	grpcServer := grpc.NewServer()
+	pb.RegisterRouteGuideServer(grpcServer, newServer())
+	grpcServer.Serve(lis)
+}
+
+func newServer() *routeGuideServer {
+	s := &routeGuideServer{routeNotes: make(map[string][]*pb.RouteNote)}
+	s.loadFeatures(*jsonDBFile)
+	return s
+}
+
+// loadFeatures loads features from a JSON file.
+func (s *routeGuideServer) loadFeatures(filePath string) {
+	file, err := ioutil.ReadFile(filePath)
+	if err != nil {
+		log.Fatalf("Failed to load default features: %v", err)
+	}
+	if err := json.Unmarshal(file, &s.savedFeatures); err != nil {
+		log.Fatalf("Failed to load default features: %v", err)
+	}
 }
 
 type routeGuideServer struct {
@@ -35,7 +72,7 @@ func (s *routeGuideServer) GetFeature(ctx context.Context, point *pb.Point) (*pb
 	return &pb.Feature{Location: point}, nil
 }
 
-func (s *routeGuideServer) ListFeature(rect *pb.Rectangle, stream pb.RouteGuide_ListFeaturesServer) error {
+func (s *routeGuideServer) ListFeatures(rect *pb.Rectangle, stream pb.RouteGuide_ListFeaturesServer) error {
 	for _, feature := range s.savedFeatures {
 		if inRange(feature.Location, rect) {
 			if err := stream.Send(feature); err != nil {
